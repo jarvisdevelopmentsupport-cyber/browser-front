@@ -1,0 +1,27 @@
+# Configuration for the static web server (wasmer/static-web-server)
+# that serves this site on Wasmer Edge.
+
+[general]
+#### Address & Root dir
+host = "::"
+port = 8080
+root = "/public"
+#### Logging
+log-level = "error"
+#### Cache Control headers
+cache-control-headers = true
+#### Auto Compression
+compression = true
+#### Directory listing (off: don't expose file listings)
+directory-listing = false
+
+[advanced]
+#### Cross-origin isolation headers.
+#### These let proxied pages use Scramjet's synchronous-XHR worker
+#### (SharedArrayBuffer). Safe for this site: every subresource of our
+#### own pages is same-origin.
+[[advanced.headers]]
+source = "**/*.html"
+[advanced.headers.headers]
+Cross-Origin-Opener-Policy = "same-origin"
+Cross-Origin-Embedder-Policy = "require-corp"
