@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Notes</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				background: #fafafa;
+			}
+			#note {
+				display: block;
+				width: 100%;
+				height: 100%;
+				box-sizing: border-box;
+				border: 0;
+				resize: none;
+				outline: none;
+				padding: 28px 32px;
+				background: #fafafa;
+				color: #222;
+				font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+			}
+			#note::placeholder {
+				color: #b5b5b5;
+			}
+			#status {
+				position: fixed;
+				left: 10px;
+				bottom: 8px;
+				border: 0;
+				padding: 4px 7px;
+				background: transparent;
+				color: #d0d0d0;
+				font: 12px system-ui, sans-serif;
+				cursor: pointer;
+			}
+			#status:hover {
+				color: #8a8a8a;
+			}
+		</style>
+	</head>
+	<body>
+		<textarea id="note" placeholder="Write something..." aria-label="Notepad"></textarea>
+		<button id="status" type="button" title="Open the browser">status</button>
+		<script>
+			"use strict";
+			(function () {
+				var note = document.getElementById("note");
+				var KEY = "notepad-content";
+				var saveTimer = null;
+
+				// Load the previously saved note.
+				note.value = localStorage.getItem(KEY) || "";
+
+				// Save automatically as the user types (debounced).
+				note.addEventListener("input", function () {
+					clearTimeout(saveTimer);
+					saveTimer = setTimeout(function () {
+						localStorage.setItem(KEY, note.value);
+					}, 150);
+				});
+
+				// Save immediately when the page is left or refreshed.
+				window.addEventListener("beforeunload", function () {
+					clearTimeout(saveTimer);
+					localStorage.setItem(KEY, note.value);
+				});
+
+				document.getElementById("status").addEventListener("click", function () {
+					location.href = "relay.html";
+				});
+			})();
+		</script>
+	</body>
+</html>

@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Relay</title>
+		<!-- Scramjet client and BareMux (loaded only on this page, never on the notepad homepage) -->
+		<script src="/scram/scramjet.all.js"></script>
+		<script src="/baremux/index.js"></script>
+		<script src="/config.js"></script>
+		<style>
+			:root {
+				--bg: #fafafa;
+				--bar: #ffffff;
+				--line: #e3e3e3;
+				--fg: #222;
+				--muted: #8a8a8a;
+				--accent: #2b6cb0;
+			}
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+			}
+			body {
+				display: flex;
+				flex-direction: column;
+				background: var(--bg);
+				color: var(--fg);
+				font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+			}
+			header {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				padding: 8px 10px;
+				background: var(--bar);
+				border-bottom: 1px solid var(--line);
+			}
+			header button,
+			header a {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				width: 32px;
+				height: 32px;
+				border: 0;
+				border-radius: 6px;
+				background: transparent;
+				color: var(--fg);
+				font-size: 15px;
+				text-decoration: none;
+				cursor: pointer;
+				flex: none;
+			}
+			header button:hover,
+			header a:hover {
+				background: #efefef;
+			}
+			form#bar {
+				flex: 1;
+				min-width: 0;
+			}
+			#address {
+				width: 100%;
+				box-sizing: border-box;
+				height: 32px;
+				padding: 0 12px;
+				border: 1px solid var(--line);
+				border-radius: 16px;
+				background: var(--bg);
+				color: var(--fg);
+				font: inherit;
+				outline: none;
+			}
+			#address:focus {
+				border-color: var(--accent);
+			}
+			#dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #ccc;
+				flex: none;
+				margin-right: 2px;
+			}
+			#dot.ok {
+				background: #3fae5a;
+			}
+			#dot.bad {
+				background: #d64545;
+			}
+			#loading {
+				height: 2px;
+				background: transparent;
+				flex: none;
+				overflow: hidden;
+			}
+			#loading.active {
+				background: #ececec;
+			}
+			#loading.active::after {
+				content: "";
+				display: block;
+				height: 100%;
+				width: 40%;
+				background: var(--accent);
+				animation: slide 1s linear infinite;
+			}
+			@keyframes slide {
+				from {
+					transform: translateX(-100%);
+				}
+				to {
+					transform: translateX(350%);
+				}
+			}
+			main {
+				position: relative;
+				flex: 1;
+				min-height: 0;
+				background: #fff;
+			}
+			main iframe {
+				display: block;
+				width: 100%;
+				height: 100%;
+				border: 0;
+				background: #fff;
+			}
+			#start {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				color: var(--muted);
+				background: #fff;
+			}
+			#error {
+				position: absolute;
+				left: 50%;
+				bottom: 18px;
+				transform: translateX(-50%);
+				max-width: 80%;
+				box-sizing: border-box;
+				padding: 10px 16px;
+				border-radius: 8px;
+				background: #fdecec;
+				border: 1px solid #f2c1c1;
+				color: #8f2d2d;
+				font-size: 13px;
+				display: none;
+			}
+			#error.visible {
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<button id="back" type="button" title="Back">&#8592;</button>
+			<button id="forward" type="button" title="Forward">&#8594;</button>
+			<button id="reload" type="button" title="Reload">&#8635;</button>
+			<form id="bar" autocomplete="off">
+				<input id="address" type="text" placeholder="Search or enter address" spellcheck="false" aria-label="Address or search" />
+			</form>
+			<a id="home" href="./index.html" title="Notepad homepage">&#8962;</a>
+			<span id="dot" title="Proxy backend status"></span>
+		</header>
+		<div id="loading"></div>
+		<main>
+			<div id="start">Enter an address above to start browsing.</div>
+			<div id="error" role="alert"></div>
+		</main>
+
+		<script>
+			"use strict";
+			(function () {
+				var els = {
+					back: document.getElementById("back"),
+					forward: document.getElementById("forward"),
+					reload: document.getElementById("reload"),
+					bar: document.getElementById("bar"),
+					address: document.getElementById("address"),
+					home: document.getElementById("home"),
+					dot: document.getElementById("dot"),
+					loading: document.getElementById("loading"),
+					main: document.querySelector("main"),
+					start: document.getElementById("start"),
+					error: document.getElementById("error"),
+				};
+
+				var scramjet = null; // ScramjetController, created during boot
+				var frame = null; // ScramjetFrame, created on first navigation
+				var booted = false;
+				var loadTimer = null;
+
+				/* ---------- helpers ---------- */
+
+				function wispUrl() {
+					// The wisp endpoint on the backend, e.g. wss://app.onrender.com/wisp/
+					return (
+						String(CONFIG.BACKEND_URL)
+							.replace(/^http/i, "ws")
+							.replace(/\/+$/, "") + "/wisp/"
+					);
+				}
+
+				function showError(message) {
+					els.error.textContent = message;
+					els.error.classList.add("visible");
+					clearTimeout(els.error._t);
+					els.error._t = setTimeout(function () {
+						els.error.classList.remove("visible");
+					}, 8000);
+				}
+
+				function setLoading(on) {
+					clearTimeout(loadTimer);
+					if (on) {
+						els.loading.classList.add("active");
+						loadTimer = setTimeout(function () {
+							// Still loading after a long time: give the user feedback.
+							showError("Still loading — the site may be slow, blocked, or the proxy backend may be asleep.");
+						}, 25000);
+					} else {
+						els.loading.classList.remove("active");
+					}
+				}
+
+				// Turn address bar input into a URL: full URLs pass through,
+				// domains get https:// prepended, anything else becomes a search.
+				function resolveInput(input) {
+					input = input.trim();
+					if (!input) return null;
+					try {
+						return new URL(input).toString();
+					} catch (err) {
+						/* not a full URL */
+					}
+					try {
+						var url = new URL("https://" + input);
+						if (url.hostname.indexOf(".") !== -1) return url.toString();
+					} catch (err) {
+						/* not a domain either */
+					}
+					return CONFIG.SEARCH_ENGINE.replace("%s", encodeURIComponent(input));
+				}
+
+				/* ---------- backend status (cross-origin, exercises CORS) ---------- */
+
+				function checkBackend() {
+					fetch(CONFIG.BACKEND_URL.replace(/\/+$/, "") + "/health", { mode: "cors" })
+						.then(function (res) {
+							if (!res.ok) throw new Error("HTTP " + res.status);
+							els.dot.className = "ok";
+							els.dot.title = "Proxy backend reachable";
+						})
+						.catch(function () {
+							els.dot.className = "bad";
+							els.dot.title = "Proxy backend unreachable";
+							showError("Proxy backend unreachable at " + CONFIG.BACKEND_URL + " — check that it is deployed and that BACKEND_URL in config.js is correct.");
+						});
+				}
+
+				/* ---------- service worker + scramjet boot ---------- */
+
+				function registerSW() {
+					if (!("serviceWorker" in navigator)) {
+						return Promise.reject(new Error("This browser does not support service workers."));
+					}
+					return navigator.serviceWorker.register("/sw.js").then(function (reg) {
+						if (reg.active) return reg;
+						var worker = reg.installing || reg.waiting;
+						if (!worker) return reg;
+						return new Promise(function (resolve) {
+							worker.addEventListener("statechange", function () {
+								if (worker.state === "activated") resolve(reg);
+							});
+						});
+					});
+				}
+
+				// The transport's wasm compiles asynchronously inside its worker.
+				// A fetch through the transport forces it to finish loading; retry
+				// while it reports "not loaded" so the first navigation can't race it.
+				function warmupTransport() {
+					var url = CONFIG.BACKEND_URL.replace(/\/+$/, "") + "/health";
+					var client = new BareMux.BareClient();
+					var attempt = 0;
+					function tryFetch() {
+						attempt++;
+						return client
+							.fetch(url)
+							.then(function () {
+								return true;
+							})
+							.catch(function retry(err) {
+								var msg = String((err && err.message) || err);
+								if (attempt < 40 && (msg.indexOf("wasm not loaded") !== -1 || msg.indexOf("not ready") !== -1)) {
+									return new Promise(function (r) {
+										setTimeout(r, 250);
+									}).then(tryFetch);
+								}
+								// A failed request that got past loading still means the
+								// transport is up; real browsing errors surface on their own.
+								return true;
+							});
+					}
+					return tryFetch();
+				}
+
+				function boot() {
+					if (booted) return Promise.resolve();
+					booted = true;
+					setLoading(true);
+
+					var controller = new ($scramjetLoadController().ScramjetController)({
+						files: {
+							wasm: "/scram/scramjet.wasm.wasm",
+							all: "/scram/scramjet.all.js",
+							sync: "/scram/scramjet.sync.js",
+						},
+					});
+
+					return controller
+						.init() // writes the Scramjet config the service worker will read
+						.then(function () {
+							return registerSW();
+						})
+						.then(function () {
+							// Route all proxied traffic through the backend's wisp endpoint.
+							var connection = new BareMux.BareMuxConnection("/baremux/worker.js");
+							return connection.setTransport("/libcurl/index.mjs", [{ websocket: wispUrl() }]);
+						})
+						.then(function () {
+							// Wait for the transport's wasm to finish loading.
+							return warmupTransport();
+						})
+						.then(function () {
+							scramjet = controller;
+							setLoading(false);
+						})
+						.catch(function (err) {
+							booted = false;
+							setLoading(false);
+							showError("Failed to start the proxy: " + (err && err.message ? err.message : err));
+							throw err;
+						});
+				}
+
+				function navigate(input) {
+					var url = resolveInput(input);
+					if (!url) return;
+
+					boot()
+						.then(function () {
+							if (!frame) {
+								frame = scramjet.createFrame();
+								frame.frame.setAttribute("aria-label", "Browsing area");
+								els.main.appendChild(frame.frame);
+								frame.frame.addEventListener("load", function () {
+									setLoading(false);
+									syncAddress();
+								});
+								frame.addEventListener("urlchange", function () {
+									setLoading(false);
+									syncAddress();
+								});
+								// Catch navigations that fire no events (link clicks,
+								// pushState): check the frame URL once a second.
+								setInterval(syncAddress, 1000);
+							}
+							els.start.style.display = "none";
+							setLoading(true);
+							try {
+								frame.go(url);
+							} catch (err) {
+								setLoading(false);
+								showError("Couldn't open that address: " + (err && err.message ? err.message : err));
+							}
+						})
+						.catch(function () {
+							/* boot() already showed an error */
+						});
+				}
+
+				// Keep the address bar in sync with the page in the frame.
+				function syncAddress() {
+					if (!frame || document.activeElement === els.address) return;
+					try {
+						var real = realUrl(frame.frame.contentWindow.location.href);
+						if (real && real !== els.address.value) {
+							els.address.value = real;
+						}
+					} catch (err) {
+						/* frame not accessible yet */
+					}
+				}
+
+				function realUrl(url) {
+					try {
+						return scramjet.decodeUrl(url);
+					} catch (err) {
+						return url;
+					}
+				}
+
+				/* ---------- wiring ---------- */
+
+				els.bar.addEventListener("submit", function (event) {
+					event.preventDefault();
+					els.address.blur();
+					navigate(els.address.value);
+				});
+
+				els.back.addEventListener("click", function () {
+					if (frame) frame.back();
+				});
+				els.forward.addEventListener("click", function () {
+					if (frame) frame.forward();
+				});
+				els.reload.addEventListener("click", function () {
+					if (frame) {
+						setLoading(true);
+						frame.reload();
+					}
+				});
+
+				checkBackend();
+				setInterval(checkBackend, 60000);
+			})();
+		</script>
+	</body>
+</html>
