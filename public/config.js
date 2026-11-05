@@ -11,6 +11,6 @@
  *                URL-encoded search term.
  */
 var CONFIG = {
-	BACKEND_URL: "http://localhost:3000",
-	SEARCH_ENGINE: "https://duckduckgo.com/?q=%s",
+	BACKEND_URL: "https://browser-back-ma32.onrender.com",
+	SEARCH_ENGINE: "https://search.brave.com/search?q=%s",
 };
